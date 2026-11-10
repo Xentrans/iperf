@@ -95,12 +95,15 @@ timeout_connect(int s, const struct sockaddr *name, socklen_t namelen,
 	int flags, optval;
 	int ret;
 
-	flags = 0;
-	if (timeout != -1) {
-		flags = fcntl(s, F_GETFL, 0);
-		if (fcntl(s, F_SETFL, flags | O_NONBLOCK) == -1)
-			return -1;
-	}
+	/*
+	 * Always connect in non-blocking mode and wait in poll(), even
+	 * without a timeout (-1): poll() returns EINTR when a termination
+	 * signal arrives, where a blocking connect() would be restarted
+	 * (SA_RESTART) and could hold up the signal for minutes.
+	 */
+	flags = fcntl(s, F_GETFL, 0);
+	if (flags == -1 || fcntl(s, F_SETFL, flags | O_NONBLOCK) == -1)
+		return -1;
 
 	if ((ret = connect(s, name, namelen)) != 0 && errno == EINPROGRESS) {
 		pfd.fd = s;
@@ -119,7 +122,7 @@ timeout_connect(int s, const struct sockaddr *name, socklen_t namelen,
 			ret = -1;
 	}
 
-	if (timeout != -1 && fcntl(s, F_SETFL, flags) == -1)
+	if (fcntl(s, F_SETFL, flags) == -1)
 		ret = -1;
 
 	return (ret);

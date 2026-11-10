@@ -29,6 +29,7 @@
 
 #include <sys/socket.h>
 #include <sys/time.h>
+#include <sys/select.h>
 #include <setjmp.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -346,6 +347,9 @@ int iperf_send_mt(struct iperf_stream *) /* __attribute__((hot)) */;
 int iperf_recv_mt(struct iperf_stream *);
 void iperf_catch_sigend(void (*handler)(int));
 void iperf_got_sigend(struct iperf_test *test, int sig) __attribute__ ((noreturn));
+void iperf_sigend_notify(int sig);
+int iperf_sigend_fdset(fd_set *set, int max_fd);
+void iperf_check_sigend(struct iperf_test *test);
 void usage(void);
 void usage_long(FILE * f);
 void warning(const char *);

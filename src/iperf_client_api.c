@@ -589,6 +589,7 @@ iperf_run_client(struct iperf_test * test)
 {
     int startup;
     int result = 0;
+    int nfds;
     fd_set read_set, write_set;
     struct iperf_time now;
     struct timeval* timeout = NULL;
@@ -648,6 +649,7 @@ iperf_run_client(struct iperf_test * test)
     while (test->state != IPERF_DONE) {
 	memcpy(&read_set, &test->read_set, sizeof(fd_set));
 	memcpy(&write_set, &test->write_set, sizeof(fd_set));
+	nfds = iperf_sigend_fdset(&read_set, test->max_fd) + 1;
 	iperf_time_now(&now);
 	timeout = tmr_timeout(&now);
 
@@ -675,14 +677,15 @@ iperf_run_client(struct iperf_test * test)
         taskDelay (1);
 	}
 
-    result = select(test->max_fd + 1,
+    result = select(nfds,
                     &read_set,
                     (test->state == TEST_RUNNING && !test->reverse) ? &write_set : NULL,
                     NULL,
                     timeout);
 #else
-	result = select(test->max_fd + 1, &read_set, &write_set, NULL, timeout);
+	result = select(nfds, &read_set, &write_set, NULL, timeout);
 #endif // __vxworks or __VXWORKS__
+	iperf_check_sigend(test);
 	if (result < 0 && errno != EINTR) {
   	    i_errno = IESELECT;
 	    goto cleanup_and_fail;
@@ -858,6 +861,9 @@ iperf_run_client(struct iperf_test * test)
     return 0;
 
   cleanup_and_fail:
+    /* The error may be a call interrupted by a termination signal. */
+    iperf_check_sigend(test);
+
     /* Cancel all outstanding threads */
     i_errno_save = i_errno;
     SLIST_FOREACH(sp, &test->streams, streams) {
