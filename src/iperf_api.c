@@ -5311,18 +5311,87 @@ diskfile_recv(struct iperf_stream *sp)
 }
 
 
+/*
+ * Termination signals are handled in two steps. The handler only calls
+ * iperf_sigend_notify(), which records the signal and writes a byte to a
+ * pipe. The main loops of iperf_run_client and iperf_run_server add the
+ * pipe to their select() sets, so they wake up even if the signal arrives
+ * just before select() is called, and then call iperf_check_sigend() to
+ * end the test from normal context. Ending the test inside the handler
+ * (as iperf3 used to, by longjmp'ing out of it) is unsafe: if the signal
+ * interrupts malloc or stdio, the code that prints the final results
+ * deadlocks on their locks.
+ */
+static volatile sig_atomic_t sigend_signal = 0;
+static int sigend_pipe[2] = { -1, -1 };
+
 void
 iperf_catch_sigend(void (*handler)(int))
 {
+    struct sigaction sa;
+    int i;
+
+    if (handler != SIG_DFL && handler != SIG_IGN && sigend_pipe[0] < 0) {
+        if (pipe(sigend_pipe) == 0) {
+            for (i = 0; i < 2; i++) {
+                (void) fcntl(sigend_pipe[i], F_SETFL, fcntl(sigend_pipe[i], F_GETFL) | O_NONBLOCK);
+                (void) fcntl(sigend_pipe[i], F_SETFD, FD_CLOEXEC);
+            }
+        } else {
+            sigend_pipe[0] = sigend_pipe[1] = -1;
+        }
+    }
+
+    /* sigaction rather than signal(), whose semantics differ between systems. */
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART;
 #ifdef SIGINT
-    signal(SIGINT, handler);
+    sigaction(SIGINT, &sa, NULL);
 #endif
 #ifdef SIGTERM
-    signal(SIGTERM, handler);
+    sigaction(SIGTERM, &sa, NULL);
 #endif
 #ifdef SIGHUP
-    signal(SIGHUP, handler);
+    sigaction(SIGHUP, &sa, NULL);
 #endif
+}
+
+/*
+ * Record a termination signal. Async-signal-safe: call it from a signal
+ * handler.
+ */
+void
+iperf_sigend_notify(int sig)
+{
+    int saved_errno = errno;
+
+    sigend_signal = sig;
+    if (sigend_pipe[1] >= 0)
+        (void) (write(sigend_pipe[1], "x", 1) + 1);
+    errno = saved_errno;
+}
+
+/*
+ * Add the termination-signal pipe to a select() read set. Returns the
+ * larger of max_fd and the pipe's descriptor.
+ */
+int
+iperf_sigend_fdset(fd_set *set, int max_fd)
+{
+    if (sigend_pipe[0] < 0)
+        return max_fd;
+    FD_SET(sigend_pipe[0], set);
+    return (sigend_pipe[0] > max_fd) ? sigend_pipe[0] : max_fd;
+}
+
+/* If a termination signal has been recorded, end the test (does not return). */
+void
+iperf_check_sigend(struct iperf_test *test)
+{
+    if (sigend_signal != 0)
+        iperf_got_sigend(test, sigend_signal);
 }
 
 /**

@@ -472,6 +472,13 @@ cleanup_server(struct iperf_test *test)
     struct iperf_stream *sp;
     int32_t err;
 
+    /*
+     * A pending termination signal (which may also be why a call failed)
+     * ends the test now, without the teardown below: closing the control
+     * socket waits for the client, which may never answer.
+     */
+    iperf_check_sigend(test);
+
     /* Try to send the error code to the client*/
     if (i_errno != IENONE && test->ctrl_sck != -1) {
         if (iperf_set_send_state(test, SERVER_ERROR) == 0) {
@@ -565,7 +572,7 @@ cleanup_server(struct iperf_test *test)
 int
 iperf_run_server(struct iperf_test *test)
 {
-    int result, s;
+    int result, s, nfds;
     int send_streams_accepted, rec_streams_accepted;
     int streams_to_send = 0, streams_to_rec = 0;
 #if defined(HAVE_TCP_CONGESTION)
@@ -658,6 +665,7 @@ iperf_run_server(struct iperf_test *test)
 
         memcpy(&read_set, &test->read_set, sizeof(fd_set));
         memcpy(&write_set, &test->write_set, sizeof(fd_set));
+        nfds = iperf_sigend_fdset(&read_set, test->max_fd) + 1;
 
 	iperf_time_now(&now);
 	timeout = tmr_timeout(&now);
@@ -687,7 +695,8 @@ iperf_run_server(struct iperf_test *test)
             timeout = &used_timeout;
         }
 
-        result = select(test->max_fd + 1, &read_set, &write_set, NULL, timeout);
+        result = select(nfds, &read_set, &write_set, NULL, timeout);
+        iperf_check_sigend(test);
         if (result < 0 && errno != EINTR) {
             cleanup_server(test);
             i_errno = IESELECT;

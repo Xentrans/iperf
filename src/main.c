@@ -130,14 +130,14 @@ main(int argc, char **argv)
 }
 
 
-static jmp_buf sigend_jmp_buf;
-static int signed_sig;
-
-static void __attribute__ ((noreturn))
+/*
+ * Only record the signal; iperf_run_client and iperf_run_server end the
+ * test from normal context (see iperf_sigend_notify).
+ */
+static void
 sigend_handler(int sig)
 {
-    signed_sig = sig;
-    longjmp(sigend_jmp_buf, 1);
+    iperf_sigend_notify(sig);
 }
 
 /**************************************************************************/
@@ -146,8 +146,6 @@ run(struct iperf_test *test)
 {
     /* Termination signals. */
     iperf_catch_sigend(sigend_handler);
-    if (setjmp(sigend_jmp_buf))
-	iperf_got_sigend(test, signed_sig);
 
     /* Ignore SIGPIPE to simplify error handling */
     signal(SIGPIPE, SIG_IGN);
